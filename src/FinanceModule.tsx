@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
-import { Banknote, ChevronRight, Clock, Plus, ReceiptText, RefreshCw, ShieldCheck, Trash2, Wallet, X } from "lucide-react";
+import { Banknote, ChevronRight, Clock, Plus, Printer, ReceiptText, RefreshCw, ShieldCheck, Trash2, Wallet, X } from "lucide-react";
+import { printInvoice } from "./invoicePdf";
 
 type InvStatus = "draft" | "sent" | "void";
 type Currency = "XAF" | "USD" | "EUR";
@@ -104,6 +105,22 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
   const selPayments = payments.filter(x => x.invoice_id === selectedId);
   const selCalc = selected ? (calc.get(selected.id) ?? { total: 0, paid: 0 }) : { total: 0, paid: 0 };
   const selBalance = Math.max(selCalc.total - selCalc.paid, 0);
+
+  async function printSelected() {
+    if (!selected) return;
+    try {
+      await printInvoice({
+        number: selected.invoice_number, status: selected.status, currency: selected.currency,
+        issueDate: selected.issue_date, dueDate: selected.due_date, notes: selected.notes,
+        clientName: clientName.get(selected.client_id) ?? "Client",
+        projectName: projects.find(p => p.id === selected.project_id)?.name ?? null,
+        items: selItems.map(x => ({ description: x.description, quantity: x.quantity, unitPrice: x.unit_price })),
+        payments: selPayments.map(x => ({ amount: x.amount, method: methodLabels[x.method], paidOn: x.paid_on, reference: x.reference }))
+      });
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Could not open the print dialog.");
+    }
+  }
 
   const formTotal = invForm.items.reduce((s, r) => s + (Number(r.quantity) || 0) * (Number(r.unit_price) || 0), 0);
 
@@ -262,6 +279,7 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
       <div className="toolbar">
         <div><b>{selected.invoice_number}</b><p className="muted tiny">{clientName.get(selected.client_id) ?? "Client"} · issued {fmtDate(selected.issue_date)} · due {fmtDate(selected.due_date)}</p></div>
         <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          <button type="button" className="secondary" onClick={printSelected}><Printer size={14}/> Print / PDF</button>
           {selected.status==="draft" && <button type="button" className="primary" disabled={busyId===selected.id} onClick={()=>setInvoiceStatus(selected,"sent")}>Mark as sent</button>}
           {selected.status==="draft" && <button type="button" className="secondary" disabled={busyId===selected.id} onClick={()=>deleteInvoice(selected)}><Trash2 size={14}/> Delete draft</button>}
           {selected.status==="sent" && <button type="button" className="secondary" disabled={busyId===selected.id} onClick={()=>setInvoiceStatus(selected,"void")}>Void invoice</button>}
