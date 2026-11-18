@@ -183,8 +183,12 @@ export default function App() {
       });
       if (fnError) {
         let detail = fnError.message;
-        try { const body = await (fnError as any).context?.json?.(); if (body?.error) detail = body.error; } catch { /* keep generic message */ }
-        addError = { message: /Failed to send|not found|404/i.test(detail) ? "The invite service is not deployed yet. Deploy the invite-team-member function or untick the invite option." : detail };
+        try {
+          const body = await (fnError as any).context?.json?.();
+          if (body?.error) detail = body.error; else if (body?.message) detail = body.message;
+        } catch { /* keep generic message */ }
+        const unreachable = (fnError as any).name === "FunctionsFetchError";
+        addError = { message: unreachable ? "Could not reach the invite service (a network or browser CORS problem). Check the function logs in Supabase, or untick the invite option to add an existing account." : detail };
       } else if (data?.invited) {
         setTeamMessage("Invitation email sent and the person has been added to this organisation.");
       }
