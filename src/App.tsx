@@ -3,10 +3,12 @@ import { supabase, configured } from "./supabase";
 import ProjectsModule from "./ProjectsModule";
 import SupportModule from "./SupportModule";
 import FinanceModule from "./FinanceModule";
+import OperationsSummary from "./OperationsSummary";
+import Attachments from "./Attachments";
 import {
   Activity, AppWindow, Building2, CircleHelp, CreditCard, LayoutDashboard,
   LogOut, Menu, Plus, Search, Settings, ShieldCheck, Users, X, UserPlus,
-  Trash2, RefreshCw
+  Trash2, RefreshCw, Paperclip
 } from "lucide-react";
 
 type Client = { id: string; client_name: string; business_type: string | null; location: string | null; status: string; created_at: string };
@@ -45,6 +47,7 @@ const assignableRoles: TeamRole[] = [
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [section, setSection] = useState<Section>("Overview");
+  const [filesClientId, setFilesClientId] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [apps, setApps] = useState<Product[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
@@ -255,6 +258,7 @@ export default function App() {
   const canManageTeam = isCentralAdmin || currentRole === "organization_admin";
   const canManageSupport = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin", "support_officer"].includes(currentRole ?? "");
   const canAccessFinance = isCentralAdmin || ["organization_admin", "operations_manager", "finance_officer"].includes(currentRole ?? "");
+  const canManageClientFiles = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin"].includes(currentRole ?? "");
   const canManageProjects = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin"].includes(currentRole ?? "");
 
   if (!configured) return <SetupNotice />;
@@ -287,8 +291,8 @@ export default function App() {
         {section==="Clients" && <button className="primary" onClick={()=>setShowAdd(true)}><Plus size={17}/> Add client</button>}
         {section==="Team & access" && canManageTeam && <button className="primary" onClick={()=>setShowAddMember(true)}><UserPlus size={17}/> Add team member</button>}</div>
         {error && <div className="alert">{error}</div>}
-        {loading ? <div className="panel loading">Loading your secure workspace…</div> : section==="Overview" ? <Overview clients={clients} apps={apps} onGo={setSection}/> :
-          section==="Clients" ? <section className="panel"><div className="toolbar"><div><b>Client directory</b><p className="muted tiny">Prospects and active client accounts</p></div><div className="search"><Search size={16}/><input placeholder="Search clients…" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="table-wrap"><table><thead><tr><th>CLIENT</th><th>BUSINESS TYPE</th><th>LOCATION</th><th>STATUS</th><th>CREATED</th></tr></thead><tbody>{filtered.map(c=><tr key={c.id}><td><b>{c.client_name}</b><small className="subcell">{c.id.slice(0,8)}</small></td><td>{c.business_type||"—"}</td><td>{c.location||"—"}</td><td><span className={`status ${c.status}`}>{c.status}</span></td><td>{new Date(c.created_at).toLocaleDateString()}</td></tr>)}{!filtered.length&&<tr><td colSpan={5} className="empty">No client records found.</td></tr>}</tbody></table></div></section> :
+        {loading ? <div className="panel loading">Loading your secure workspace…</div> : section==="Overview" ? <Overview clients={clients} apps={apps} onGo={setSection} organizationId={organizationId} canAccessFinance={canAccessFinance}/> :
+          section==="Clients" ? <><section className="panel"><div className="toolbar"><div><b>Client directory</b><p className="muted tiny">Prospects and active client accounts</p></div><div className="search"><Search size={16}/><input placeholder="Search clients…" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="table-wrap"><table><thead><tr><th>CLIENT</th><th>BUSINESS TYPE</th><th>LOCATION</th><th>STATUS</th><th>CREATED</th><th></th></tr></thead><tbody>{filtered.map(c=><tr key={c.id}><td><b>{c.client_name}</b><small className="subcell">{c.id.slice(0,8)}</small></td><td>{c.business_type||"—"}</td><td>{c.location||"—"}</td><td><span className={`status ${c.status}`}>{c.status}</span></td><td>{new Date(c.created_at).toLocaleDateString()}</td><td><button type="button" className="secondary" onClick={()=>setFilesClientId(c.id)}><Paperclip size={14}/> Files</button></td></tr>)}{!filtered.length&&<tr><td colSpan={6} className="empty">No client records found.</td></tr>}</tbody></table></div></section>{filesClientId && organizationId && <section className="panel" style={{marginTop:18}}><div className="toolbar"><div><b>{clients.find(c=>c.id===filesClientId)?.client_name ?? "Client"}</b><p className="muted tiny">Contracts, agreements and other client documents</p></div><button type="button" className="icon-btn" aria-label="Close files" onClick={()=>setFilesClientId(null)}><X size={18}/></button></div><Attachments organizationId={organizationId} entityType="client" entityId={filesClientId} canWrite={canManageClientFiles} title="Client files"/></section>}</> :
           section==="Applications" ? <section className="panel"><div className="toolbar"><div><b>Application registry</b><p className="muted tiny">Software products owned or managed by Nexora</p></div></div><div className="app-grid">{apps.map(a=><article className="app-card" key={a.id}><div className="app-icon"><AppWindow/></div><span className={`status ${a.status}`}>{a.status}</span><h3>{a.app_name}</h3><p className="muted tiny">{a.app_code}</p><p className="tiny">Version: {a.current_version||"Not recorded"}</p>{a.production_url&&<a href={a.production_url} target="_blank" rel="noreferrer">Open production site ↗</a>}</article>)}{!apps.length&&<p className="empty">No applications registered yet. Add your Nexora products to the application registry.</p>}</div></section> :
           section==="Support" && organizationId ? <SupportModule organizationId={organizationId} clients={clients} apps={apps} canManage={canManageSupport}/> :
           section==="Finance" && organizationId ? <FinanceModule organizationId={organizationId} clients={clients} canAccess={canAccessFinance}/> :
@@ -364,7 +368,7 @@ function TeamAccess({
   </section>;
 }
 
-function Overview({clients,apps,onGo}:{clients:Client[];apps:Product[];onGo:(s:Section)=>void}) {
+function Overview({clients,apps,onGo,organizationId,canAccessFinance}:{clients:Client[];apps:Product[];onGo:(s:Section)=>void;organizationId:string|null;canAccessFinance:boolean}) {
   const active = clients.filter(c=>c.status==="active").length;
   const prospect = clients.filter(c=>c.status==="prospect").length;
   return <><div className="stats">
@@ -372,7 +376,7 @@ function Overview({clients,apps,onGo}:{clients:Client[];apps:Product[];onGo:(s:S
     <Stat label="Active clients" value={active} icon={<Users/>} note="Currently active"/>
     <Stat label="Applications" value={apps.length} icon={<AppWindow/>} note="In the product registry"/>
     <Stat label="Prospects" value={prospect} icon={<Activity/>} note="Awaiting conversion"/>
-  </div><div className="two-col"><section className="panel"><div className="panel-title"><div><h3>Recent clients</h3><p className="muted tiny">Latest records in your directory</p></div><button className="text-btn" onClick={()=>onGo("Clients")}>View all →</button></div>{clients.slice(0,5).map(c=><div className="list-row" key={c.id}><div className="round-icon"><Building2 size={17}/></div><div className="grow"><b>{c.client_name}</b><small>{c.business_type||"Business"} · {c.location||"Location not set"}</small></div><span className={`status ${c.status}`}>{c.status}</span></div>)}{!clients.length&&<p className="empty">Your client directory is ready. Add your first client record.</p>}</section><section className="panel"><div className="panel-title"><div><h3>Application portfolio</h3><p className="muted tiny">Registered Nexora products</p></div><button className="text-btn" onClick={()=>onGo("Applications")}>View all →</button></div>{apps.slice(0,5).map(a=><div className="list-row" key={a.id}><div className="round-icon"><AppWindow size={17}/></div><div className="grow"><b>{a.app_name}</b><small>{a.app_code} · {a.current_version||"Version pending"}</small></div><span className={`status ${a.status}`}>{a.status}</span></div>)}{!apps.length&&<p className="empty">Add your Nexora products to the application registry.</p>}</section></div><section className="notice"><ShieldCheck/><div><b>Security-first rollout</b><p>Client data is protected by database access policies. Complete administrator bootstrap and verify role-based access before publishing this portal.</p></div></section></>;
+  </div>{organizationId && <OperationsSummary organizationId={organizationId} canAccessFinance={canAccessFinance} onGo={onGo}/>}<div className="two-col"><section className="panel"><div className="panel-title"><div><h3>Recent clients</h3><p className="muted tiny">Latest records in your directory</p></div><button className="text-btn" onClick={()=>onGo("Clients")}>View all →</button></div>{clients.slice(0,5).map(c=><div className="list-row" key={c.id}><div className="round-icon"><Building2 size={17}/></div><div className="grow"><b>{c.client_name}</b><small>{c.business_type||"Business"} · {c.location||"Location not set"}</small></div><span className={`status ${c.status}`}>{c.status}</span></div>)}{!clients.length&&<p className="empty">Your client directory is ready. Add your first client record.</p>}</section><section className="panel"><div className="panel-title"><div><h3>Application portfolio</h3><p className="muted tiny">Registered Nexora products</p></div><button className="text-btn" onClick={()=>onGo("Applications")}>View all →</button></div>{apps.slice(0,5).map(a=><div className="list-row" key={a.id}><div className="round-icon"><AppWindow size={17}/></div><div className="grow"><b>{a.app_name}</b><small>{a.app_code} · {a.current_version||"Version pending"}</small></div><span className={`status ${a.status}`}>{a.status}</span></div>)}{!apps.length&&<p className="empty">Add your Nexora products to the application registry.</p>}</section></div><section className="notice"><ShieldCheck/><div><b>Security-first rollout</b><p>Client data is protected by database access policies. Complete administrator bootstrap and verify role-based access before publishing this portal.</p></div></section></>;
 }
 function Stat({label,value,icon,note}:{label:string;value:number;icon:React.ReactNode;note:string}) { return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className="stat-icon">{icon}</span></div><strong>{value}</strong><small>{note}</small></div>; }
 function SetupNotice(){return <main className="login-wrap"><div className="login-card"><div className="brand-mark">N</div><p className="eyebrow">NEXORA SMART SERVICES LTD</p><h1>Connect your HQ backend</h1><p className="muted">The app files are ready. Add your Supabase project URL and publishable/anon key in a local <code>.env</code> file, then restart the development server.</p><ol className="steps"><li>Create a Supabase project.</li><li>Run <code>supabase/schema.sql</code> in the SQL Editor.</li><li>Copy <code>.env.example</code> to <code>.env</code> and add your project credentials.</li><li>Run <code>npm install</code> then <code>npm run dev</code>.</li></ol><p className="tiny muted">Never put a Supabase service-role key in this frontend.</p></div></main>}

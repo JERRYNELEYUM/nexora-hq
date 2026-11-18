@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
+import Attachments from "./Attachments";
 import { AlertTriangle, CheckCircle2, ChevronRight, CircleHelp, Plus, RefreshCw, Search, Trash2, X, Wrench } from "lucide-react";
 
 type TStatus = "open" | "in_progress" | "waiting" | "resolved" | "closed";
@@ -202,6 +203,7 @@ export default function SupportModule({ organizationId, clients, apps, canManage
         <input style={{flex:1}} value={newNote} onChange={e=>setNewNote(e.target.value)} placeholder="Add a note about this ticket…" aria-label="New note"/>
         <button className="primary" disabled={busyId==="note" || !newNote.trim()}><Plus size={16}/> Add note</button>
       </form>}
+      <Attachments organizationId={organizationId} entityType="ticket" entityId={selected.id} canWrite={canManage} title="Screenshots and files"/>
     </section>}
 
     {showNew && <div className="modal-backdrop"><form className="modal" onSubmit={createTicket}>

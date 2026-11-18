@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
-import { Banknote, ChevronRight, Clock, Plus, Printer, ReceiptText, RefreshCw, ShieldCheck, Trash2, Wallet, X } from "lucide-react";
+import Attachments from "./Attachments";
+import { Banknote, ChevronRight, Clock, Paperclip, Plus, Printer, ReceiptText, RefreshCw, ShieldCheck, Trash2, Wallet, X } from "lucide-react";
 import { printInvoice } from "./invoicePdf";
 
 type InvStatus = "draft" | "sent" | "void";
@@ -44,6 +45,7 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [expenseFilesId, setExpenseFilesId] = useState<string | null>(null);
 
   const clientName = useMemo(() => new Map(clients.map(c => [c.id, c.client_name])), [clients]);
 
@@ -269,11 +271,17 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
             {expenses.map(x => <tr key={x.id}>
               <td><b>{x.description}</b><small className="subcell">{projects.find(p=>p.id===x.project_id)?.name ?? "Not linked to a project"}</small></td>
               <td>{x.category}</td><td>{fmtDate(x.spent_on)}</td><td>{money(x.amount, x.currency)}</td>
-              <td><button type="button" className="icon-btn" aria-label={`Delete ${x.description}`} disabled={busyId===x.id} onClick={()=>deleteExpense(x)}><Trash2 size={15}/></button></td>
+              <td style={{whiteSpace:"nowrap"}}><button type="button" className="icon-btn" aria-label={`Receipts for ${x.description}`} onClick={()=>setExpenseFilesId(x.id)}><Paperclip size={15}/></button> <button type="button" className="icon-btn" aria-label={`Delete ${x.description}`} disabled={busyId===x.id} onClick={()=>deleteExpense(x)}><Trash2 size={15}/></button></td>
             </tr>)}
             {!expenses.length && <tr><td colSpan={5} className="empty">No expenses recorded yet.</td></tr>}
           </tbody></table></div>}
     </section>
+
+    {tab==="expenses" && expenseFilesId && <section className="panel" style={{marginTop:18}}>
+      <div className="toolbar"><div><b>Receipts and files</b><p className="muted tiny">{expenses.find(e=>e.id===expenseFilesId)?.description ?? "Expense"}</p></div>
+        <button type="button" className="icon-btn" aria-label="Close files" onClick={()=>setExpenseFilesId(null)}><X size={18}/></button></div>
+      <Attachments organizationId={organizationId} entityType="expense" entityId={expenseFilesId} canWrite={canAccess} title="Receipts"/>
+    </section>}
 
     {selected && tab==="invoices" && <section className="panel" style={{marginTop:18}}>
       <div className="toolbar">
@@ -310,6 +318,7 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
         <input placeholder="Reference (optional)" value={payForm.reference} onChange={e=>setPayForm({...payForm,reference:e.target.value})} aria-label="Payment reference"/>
         <button className="primary" disabled={busyId==="pay"}><Plus size={16}/> Record payment</button>
       </form>}
+      <Attachments organizationId={organizationId} entityType="invoice" entityId={selected.id} canWrite={canAccess} title="Invoice files"/>
     </section>}
 
     {showInvoice && <div className="modal-backdrop"><form className="modal" onSubmit={createInvoice}>

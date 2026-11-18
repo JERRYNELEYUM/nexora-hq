@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
+import Attachments from "./Attachments";
 import { Activity, CheckCircle2, ChevronRight, Plus, RefreshCw, Search, Trash2, X, Clock, Hammer } from "lucide-react";
 
 type ProjectStatus = "planning" | "active" | "on_hold" | "completed" | "cancelled";
@@ -259,6 +260,7 @@ export default function ProjectsModule({ organizationId, clients, apps, canManag
         <input style={{flex:1}} value={newTask} onChange={e=>setNewTask(e.target.value)} placeholder="Describe the next task…" aria-label="New task title"/>
         <button className="primary" disabled={busyId==="new-task" || !newTask.trim()}><Plus size={16}/> Add task</button>
       </form>}
+      <Attachments organizationId={organizationId} entityType="project" entityId={selected.id} canWrite={canManage} title="Project files"/>
     </section>}
 
     {showNew && <div className="modal-backdrop"><form className="modal" onSubmit={createProject}>
