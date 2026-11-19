@@ -16,7 +16,18 @@ type AccessibleOrganization = {
   organization_name: string;
   user_role: string;
 };
-type Client = { id: string; client_name: string; business_type: string | null; location: string | null; status: string; created_at: string };
+type Client = {
+  id: string;
+  client_name: string;
+  business_type: string | null;
+  location: string | null;
+  contact_person: string | null;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
+  status: string;
+  created_at: string;
+};
 type Product = {
   id: string;
   app_name: string;
@@ -84,7 +95,20 @@ export default function App() {
   const [showAdd, setShowAdd] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
-  const [form, setForm] = useState({ client_name: "", business_type: "Hotel", location: "Buea", status: "prospect" });
+  const emptyClientForm = {
+  client_name: "",
+  business_type: "Hotel",
+  location: "Buea",
+  contact_person: "",
+  phone: "",
+  email: "",
+  notes: "",
+  status: "prospect"
+};
+
+const [form, setForm] = useState(emptyClientForm);
+const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+const [savingClient, setSavingClient] = useState(false);
   const [memberForm, setMemberForm] = useState({ email: "", role: "staff" as TeamRole, invite: true });
 const emptyApplicationForm = {
   app_name: "",
@@ -139,9 +163,9 @@ async function loadOrganizationData(orgId: string) {
   const [c, a] = await Promise.all([
     supabase
       .from("clients")
-      .select("id,client_name,business_type,location,status,created_at")
-      .eq("organization_id", orgId)
-      .order("created_at", { ascending: false }),
+.select("id,client_name,business_type,location,contact_person,phone,email,notes,status,created_at")
+.eq("organization_id", orgId)
+.order("created_at", { ascending: false }),
 
     supabase
       .from("applications")
@@ -246,18 +270,54 @@ async function switchOrganization(orgId: string) {
     setAuthBusy(false);
   }
 
-  async function addClient(e: React.FormEvent) {
-    e.preventDefault();
-    if (!supabase) return;
-    if (!organizationId) { setError("Your account is not linked to a Nexora organisation."); return; }
-    const { error } = await supabase.from("clients").insert({ ...form, organization_id: organizationId });
-    if (error) setError(error.message);
-    else {
-      setShowAdd(false);
-      setForm({ client_name: "", business_type: "Hotel", location: "Buea", status: "prospect" });
-      await loadData();
-    }
+  
+async function addClient(e: React.FormEvent) {
+  e.preventDefault();
+
+  if (!supabase) return;
+
+  if (!canManageClients) {
+    setError("You do not have permission to manage clients.");
+    return;
   }
+
+  if (!organizationId) {
+    setError("Your account is not linked to a Nexora organisation.");
+    return;
+  }
+
+    setError("");
+  setSavingClient(true);
+
+  try {
+    const result = selectedClient
+      ? await supabase
+          .from("clients")
+          .update(form)
+          .eq("id", selectedClient.id)
+          .eq("organization_id", organizationId)
+      : await supabase
+          .from("clients")
+          .insert({
+            ...form,
+            organization_id: organizationId
+          });
+
+    if (result.error) {
+      setError(result.error.message);
+      return;
+    }
+
+    setShowAdd(false);
+    setSelectedClient(null);
+    setForm(emptyClientForm);
+
+    await loadData();
+  } finally {
+    setSavingClient(false);
+  }
+}
+
 
   function openApplication(application?: Product) {
     if (application) {
@@ -484,6 +544,7 @@ async function changeApplicationArchiveStatus(archive: boolean) {
 }, [apps, applicationSearch, applicationStatusFilter]);
   const canManageTeam = isCentralAdmin || currentRole === "organization_admin";
   const canManageApplications = isCentralAdmin || currentRole === "organization_admin";
+  const canManageClients = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin"].includes(currentRole ?? "");
   const canManageSupport = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin", "support_officer"].includes(currentRole ?? "");
   const canAccessFinance = isCentralAdmin || ["organization_admin", "operations_manager", "finance_officer"].includes(currentRole ?? "");
   const canManageClientFiles = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin"].includes(currentRole ?? "");
@@ -537,12 +598,58 @@ async function changeApplicationArchiveStatus(archive: boolean) {
       <header className="topbar"><button className="icon-btn mobile-menu" onClick={()=>setMobileNav(true)}><Menu/></button><div className="crumb">Nexora HQ <span>/</span> {section}</div><div className="top-user"><span className="avatar">{(session.user.email ?? "N").slice(0,1).toUpperCase()}</span><span>{session.user.email}</span></div></header>
       <div className="content">
         <div className="page-head"><div><p className="eyebrow">COMPANY CONTROL CENTRE</p><h1>{section}</h1><p className="muted">{section==="Overview"?"A single view of Nexora operations, clients and applications.":`Manage ${section.toLowerCase()} across Nexora Smart Services Ltd.`}</p></div>
-        {section==="Clients" && <button className="primary" onClick={()=>setShowAdd(true)}><Plus size={17}/> Add client</button>}
+        
+{section==="Clients" && canManageClients && (
+  <button
+    className="primary"
+    onClick={() => {
+      setSelectedClient(null);
+      setForm(emptyClientForm);
+      setShowAdd(true);
+    }}
+  >
+    <Plus size={17}/> Add client
+  </button>
+)}
+
         {section==="Applications" && canManageApplications && <button className="primary" onClick={()=>openApplication()}><Plus size={17}/> Add application</button>}
         {section==="Team & access" && canManageTeam && <button className="primary" onClick={()=>setShowAddMember(true)}><UserPlus size={17}/> Add team member</button>}</div>
         {error && <div className="alert">{error}</div>}
         {loading ? <div className="panel loading">Loading your secure workspace…</div> : section==="Overview" ? <Overview clients={clients} apps={apps} onGo={setSection} organizationId={organizationId} canAccessFinance={canAccessFinance}/> :
-          section==="Clients" ? <><section className="panel"><div className="toolbar"><div><b>Client directory</b><p className="muted tiny">Prospects and active client accounts</p></div><div className="search"><Search size={16}/><input placeholder="Search clients…" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="table-wrap"><table><thead><tr><th>CLIENT</th><th>BUSINESS TYPE</th><th>LOCATION</th><th>STATUS</th><th>CREATED</th><th></th></tr></thead><tbody>{filtered.map(c=><tr key={c.id}><td><b>{c.client_name}</b><small className="subcell">{c.id.slice(0,8)}</small></td><td>{c.business_type||"—"}</td><td>{c.location||"—"}</td><td><span className={`status ${c.status}`}>{c.status}</span></td><td>{new Date(c.created_at).toLocaleDateString()}</td><td><button type="button" className="secondary" onClick={()=>setFilesClientId(c.id)}><Paperclip size={14}/> Files</button></td></tr>)}{!filtered.length&&<tr><td colSpan={6} className="empty">No client records found.</td></tr>}</tbody></table></div></section>{filesClientId && organizationId && <section className="panel" style={{marginTop:18}}><div className="toolbar"><div><b>{clients.find(c=>c.id===filesClientId)?.client_name ?? "Client"}</b><p className="muted tiny">Contracts, agreements and other client documents</p></div><button type="button" className="icon-btn" aria-label="Close files" onClick={()=>setFilesClientId(null)}><X size={18}/></button></div><Attachments organizationId={organizationId} entityType="client" entityId={filesClientId} canWrite={canManageClientFiles} title="Client files"/></section>}</> :
+          section==="Clients" ? <><section className="panel"><div className="toolbar"><div><b>Client directory</b><p className="muted tiny">Prospects and active client accounts</p></div><div className="search"><Search size={16}/><input placeholder="Search clients…" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="table-wrap"><table><thead><tr><th>CLIENT</th><th>BUSINESS TYPE</th><th>LOCATION</th><th>STATUS</th><th>CREATED</th><th></th></tr></thead><tbody>{filtered.map(c=><tr key={c.id}><td><b>{c.client_name}</b><small className="subcell">{c.id.slice(0,8)}</small></td><td>{c.business_type||"—"}</td><td>{c.location||"—"}</td><td><span className={`status ${c.status}`}>{c.status}</span></td><td>{new Date(c.created_at).toLocaleDateString()}</td>
+<td>
+  {canManageClients && (
+    <button
+      type="button"
+      className="secondary"
+      onClick={() => {
+        setSelectedClient(c);
+        setForm({
+          client_name: c.client_name,
+          business_type: c.business_type ?? "Other",
+          location: c.location ?? "",
+          contact_person: c.contact_person ?? "",
+          phone: c.phone ?? "",
+          email: c.email ?? "",
+          notes: c.notes ?? "",
+          status: c.status
+        });
+        setShowAdd(true);
+        setFilesClientId(null);
+      }}
+    >
+      Edit
+    </button>
+  )}
+  <button
+    type="button"
+    className="secondary"
+    onClick={() => setFilesClientId(c.id)}
+  >
+    <Paperclip size={14}/> Files
+  </button>
+</td>
+</tr>)}{!filtered.length&&<tr><td colSpan={6} className="empty">No client records found.</td></tr>}</tbody></table></div></section>{filesClientId && organizationId && <section className="panel" style={{marginTop:18}}><div className="toolbar"><div><b>{clients.find(c=>c.id===filesClientId)?.client_name ?? "Client"}</b><p className="muted tiny">Contracts, agreements and other client documents</p></div><button type="button" className="icon-btn" aria-label="Close files" onClick={()=>setFilesClientId(null)}><X size={18}/></button></div><Attachments organizationId={organizationId} entityType="client" entityId={filesClientId} canWrite={canManageClientFiles} title="Client files"/></section>}</> :
           section==="Applications" ? <section className="panel"><div className="toolbar">
   <div>
     <b>Application registry ({apps.length})</b>
@@ -612,13 +719,136 @@ async function changeApplicationArchiveStatus(archive: boolean) {
           <section className="panel coming"><div className="app-icon"><Settings/></div><h2>{section} module</h2><p className="muted">This module is planned for the next build phase. The database foundation is prepared for staged expansion; no live {section.toLowerCase()} actions are enabled yet.</p><span className="status planned">Planned module</span></section>}
       </div>
     </main>
-    {showAdd && <div className="modal-backdrop"><form className="modal" onSubmit={addClient}><div className="modal-head"><div><h2>Add a client</h2><p className="muted tiny">Create a new prospect or client record.</p></div><button type="button" className="icon-btn" onClick={()=>setShowAdd(false)}><X/></button></div>
-      <label>Business name<input required value={form.client_name} onChange={e=>setForm({...form,client_name:e.target.value})}/></label>
-      <label>Business type<select value={form.business_type} onChange={e=>setForm({...form,business_type:e.target.value})}><option>Hotel</option><option>Retail / Supermarket</option><option>Clinic</option><option>School</option><option>NGO</option><option>SME</option><option>Other</option></select></label>
-      <label>Location<input value={form.location} onChange={e=>setForm({...form,location:e.target.value})}/></label>
-      <label>Stage<select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}><option value="prospect">Prospect</option><option value="onboarding">Onboarding</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
-      <div className="modal-actions"><button type="button" className="secondary" onClick={()=>setShowAdd(false)}>Cancel</button><button className="primary">Save client</button></div>
-    </form></div>}
+    
+{showAdd && canManageClients && (
+  <div className="modal-backdrop">
+    <form className="modal" onSubmit={addClient}>
+      <div className="modal-head">
+        <div>
+          <h2>{selectedClient ? "Edit client" : "Add a client"}</h2>
+          <p className="muted tiny">
+            {selectedClient
+              ? "Update the client account details."
+              : "Create a new prospect or client record."}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => {
+            setShowAdd(false);
+            setSelectedClient(null);
+            setForm(emptyClientForm);
+          }}
+        >
+          <X />
+        </button>
+      </div>
+
+      <label>
+        Business name
+        <input
+          required
+          value={form.client_name}
+          onChange={e => setForm({...form, client_name: e.target.value})}
+        />
+      </label>
+
+      <label>
+        Business type
+        <select
+          value={form.business_type}
+          onChange={e => setForm({...form, business_type: e.target.value})}
+        >
+          <option>Hotel</option>
+          <option>Retail / Supermarket</option>
+          <option>Clinic</option>
+          <option>School</option>
+          <option>NGO</option>
+          <option>SME</option>
+          <option>Other</option>
+        </select>
+      </label>
+
+      <label>
+        Location
+        <input
+          value={form.location}
+          onChange={e => setForm({...form, location: e.target.value})}
+        />
+      </label>
+
+      <label>
+        Contact person
+        <input
+          value={form.contact_person}
+          onChange={e => setForm({...form, contact_person: e.target.value})}
+        />
+      </label>
+
+      <label>
+        Phone number
+        <input
+          type="tel"
+          value={form.phone}
+          onChange={e => setForm({...form, phone: e.target.value})}
+        />
+      </label>
+
+      <label>
+        Email address
+        <input
+          type="email"
+          value={form.email}
+          onChange={e => setForm({...form, email: e.target.value})}
+        />
+      </label>
+
+      <label>
+        Notes
+        <textarea
+          value={form.notes}
+          onChange={e => setForm({...form, notes: e.target.value})}
+        />
+      </label>
+
+      <label>
+        Stage
+        <select
+          value={form.status}
+          onChange={e => setForm({...form, status: e.target.value})}
+        >
+          <option value="prospect">Prospect</option>
+          <option value="onboarding">Onboarding</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </label>
+
+      <div className="modal-actions">
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => {
+            setShowAdd(false);
+            setSelectedClient(null);
+            setForm(emptyClientForm);
+          }}
+        >
+          Cancel
+        </button>
+        <button className="primary" disabled={savingClient}>
+          {savingClient
+            ? "Saving…"
+            : selectedClient
+              ? "Save changes"
+              : "Save client"}
+        </button>
+      </div>
+    </form>
+  </div>
+)}
+
     {showAddMember && <div className="modal-backdrop"><form className="modal" onSubmit={addTeamMember}>
       <div className="modal-head"><div><h2>Add a team member</h2><p className="muted tiny">Invite someone by email, or attach an account that already exists.</p></div><button type="button" className="icon-btn" onClick={()=>setShowAddMember(false)}><X/></button></div>
       <label>Team member email<input type="email" required value={memberForm.email} onChange={e=>setMemberForm({...memberForm,email:e.target.value})} placeholder="person@example.com"/></label>
