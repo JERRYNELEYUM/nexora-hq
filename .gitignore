@@ -8,3 +8,6 @@ dist/
 
 app-changes.txt
 supabase/.temp/
+
+.vscode/
+tsconfig.tsbuildinfo
