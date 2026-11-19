@@ -11,11 +11,17 @@ import {
   Trash2, RefreshCw, Paperclip
 } from "lucide-react";
 
+type AccessibleOrganization = {
+  organization_id: string;
+  organization_name: string;
+  user_role: string;
+};
 type Client = { id: string; client_name: string; business_type: string | null; location: string | null; status: string; created_at: string };
 type Product = {
   id: string;
   app_name: string;
   app_code: string;
+  description: string | null;
   status: "development" | "staging" | "production" | "maintenance" | "archived";
   repository_url: string | null;
   production_url: string | null;
@@ -63,6 +69,7 @@ export default function App() {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string | null>(null);
+  const [organizations, setOrganizations] = useState<AccessibleOrganization[]>([]);
   const [isCentralAdmin, setIsCentralAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [teamLoading, setTeamLoading] = useState(false);
@@ -72,14 +79,17 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [search, setSearch] = useState("");
+  const [applicationSearch, setApplicationSearch] = useState("");
+  const [applicationStatusFilter, setApplicationStatusFilter] = useState<"all" | Product["status"]>("all");
   const [showAdd, setShowAdd] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [form, setForm] = useState({ client_name: "", business_type: "Hotel", location: "Buea", status: "prospect" });
   const [memberForm, setMemberForm] = useState({ email: "", role: "staff" as TeamRole, invite: true });
-  const emptyApplicationForm = {
+const emptyApplicationForm = {
   app_name: "",
   app_code: "",
+  description: "",
   repository_url: "",
   production_url: "",
   hosting_provider: "",
@@ -117,36 +127,103 @@ const [savingApplication, setSavingApplication] = useState(false);
     if (session && section === "Team & access" && organizationId) loadTeam(organizationId);
   }, [session, section, organizationId]);
 
-  async function loadData() {
-    if (!supabase || !session) return;
-    setLoading(true); setError("");
-    const { data: centralData, error: centralError } = await supabase.rpc("is_nexora_super_admin");
-    const central = !centralError && centralData === true;
-    setIsCentralAdmin(central);
+  
+async function loadOrganizationData(orgId: string) {
+  if (!supabase) return;
 
-    const membership = await supabase.from("organization_members")
-      .select("organization_id,role").eq("user_id", session.user.id).limit(1).maybeSingle();
+  setLoading(true);
+  setError("");
+  setFilesClientId(null);
+  setTeam([]);
 
-    if (membership.error || !membership.data?.organization_id) {
-      setError(membership.error?.message || "This account has no Nexora HQ organisation membership. Ask the central Nexora administrator to assign your role.");
-      setClients([]); setApps([]); setTeam([]); setOrganizationId(null);
-      setCurrentRole(null); setLoading(false); return;
-    }
+  const [c, a] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id,client_name,business_type,location,status,created_at")
+      .eq("organization_id", orgId)
+      .order("created_at", { ascending: false }),
 
-    const orgId = membership.data.organization_id as string;
-    setOrganizationId(orgId);
-    setCurrentRole(membership.data.role as string);
+    supabase
+      .from("applications")
+      .select("id,app_name,app_code,description,repository_url,production_url,hosting_provider,current_version,status,created_at")
+      .eq("organization_id", orgId)
+      .order("app_name")
+  ]);
 
-    const [c, a] = await Promise.all([
-      supabase.from("clients").select("id,client_name,business_type,location,status,created_at").eq("organization_id", orgId).order("created_at", { ascending: false }),
-      supabase.from("applications").select("id,app_name,app_code,repository_url,production_url,hosting_provider,current_version,status,created_at").eq("organization_id", orgId).order("app_name")
-    ]);
-    if (c.error) setError(c.error.message);
-    else setClients((c.data ?? []) as Client[]);
-    if (a.error) setError(a.error.message);
-    else setApps((a.data ?? []) as Product[]);
+  if (c.error) setError(c.error.message);
+  else setClients((c.data ?? []) as Client[]);
+
+  if (a.error) setError(a.error.message);
+  else setApps((a.data ?? []) as Product[]);
+
+  setLoading(false);
+}
+
+async function loadData() {
+  if (!supabase || !session) return;
+
+  setLoading(true);
+  setError("");
+
+  const { data: centralData, error: centralError } =
+    await supabase.rpc("is_nexora_super_admin");
+
+  const central = !centralError && centralData === true;
+  setIsCentralAdmin(central);
+
+  const { data, error: organizationError } =
+    await supabase.rpc("get_accessible_organizations");
+
+  if (organizationError) {
+    setError(`Could not load organisations: ${organizationError.message}`);
+    setOrganizations([]);
+    setOrganizationId(null);
+    setCurrentRole(null);
+    setClients([]);
+    setApps([]);
+    setTeam([]);
     setLoading(false);
+    return;
   }
+
+  const accessible = (data ?? []) as AccessibleOrganization[];
+
+  setOrganizations(accessible);
+
+  if (!accessible.length) {
+    setError("This account has no accessible Nexora HQ organisation. Ask the central Nexora administrator to assign your role.");
+    setOrganizationId(null);
+    setCurrentRole(null);
+    setClients([]);
+    setApps([]);
+    setTeam([]);
+    setLoading(false);
+    return;
+  }
+
+  const selected =
+    accessible.find(org => org.organization_id === organizationId) ??
+    accessible[0];
+
+  setOrganizationId(selected.organization_id);
+  setCurrentRole(selected.user_role);
+
+  await loadOrganizationData(selected.organization_id);
+}
+
+async function switchOrganization(orgId: string) {
+  const selected = organizations.find(
+    org => org.organization_id === orgId
+  );
+
+  if (!selected) return;
+
+  setOrganizationId(selected.organization_id);
+  setCurrentRole(selected.user_role);
+
+  await loadOrganizationData(selected.organization_id);
+}
+
 
   async function loadTeam(orgId: string) {
     if (!supabase) return;
@@ -188,6 +265,7 @@ const [savingApplication, setSavingApplication] = useState(false);
       setApplicationForm({
         app_name: application.app_name,
         app_code: application.app_code,
+        description: application.description ?? "",
         repository_url: application.repository_url ?? "",
         production_url: application.production_url ?? "",
         hosting_provider: application.hosting_provider ?? "",
@@ -223,6 +301,7 @@ const [savingApplication, setSavingApplication] = useState(false);
     const payload = {
       app_name: applicationForm.app_name.trim(),
       app_code: applicationForm.app_code.trim().toUpperCase(),
+      description: applicationForm.description.trim() || null,
       repository_url: applicationForm.repository_url.trim() || null,
       production_url: applicationForm.production_url.trim() || null,
       hosting_provider: applicationForm.hosting_provider.trim() || null,
@@ -249,6 +328,48 @@ const [savingApplication, setSavingApplication] = useState(false);
 
     setSavingApplication(false);
   }
+
+  
+async function changeApplicationArchiveStatus(archive: boolean) {
+  if (!supabase || !organizationId || !selectedApplication) {
+    setError("Application or organisation information is missing.");
+    return;
+  }
+
+  if (!isCentralAdmin && currentRole !== "organization_admin") {
+    setError("You do not have permission to manage applications.");
+    return;
+  }
+
+  const action = archive ? "archive" : "restore";
+
+  const confirmed = window.confirm(
+    `Are you sure you want to ${action} ${selectedApplication.app_name}?`
+  );
+
+  if (!confirmed) return;
+
+  setSavingApplication(true);
+  setError("");
+
+  const { error: updateError } = await supabase
+    .from("applications")
+    .update({
+      status: archive ? "archived" : "development"
+    })
+    .eq("id", selectedApplication.id)
+    .eq("organization_id", organizationId);
+
+  if (updateError) {
+    setError(updateError.message);
+  } else {
+    setShowApplicationModal(false);
+    setSelectedApplication(null);
+    await loadData();
+  }
+
+  setSavingApplication(false);
+}
 
   async function sendPasswordReset() {
     if (!supabase) return;
@@ -348,6 +469,19 @@ const [savingApplication, setSavingApplication] = useState(false);
   async function signOut() { await supabase?.auth.signOut(); }
 
   const filtered = useMemo(() => clients.filter(c => `${c.client_name} ${c.business_type ?? ""} ${c.location ?? ""}`.toLowerCase().includes(search.toLowerCase())), [clients, search]);
+  const filteredApplications = useMemo(() => {
+  return apps.filter(app => {
+    const matchesSearch = `${app.app_name} ${app.app_code} ${app.description ?? ""}`
+      .toLowerCase()
+      .includes(applicationSearch.toLowerCase());
+
+    const matchesStatus =
+      applicationStatusFilter === "all" ||
+      app.status === applicationStatusFilter;
+
+    return matchesSearch && matchesStatus;
+  });
+}, [apps, applicationSearch, applicationStatusFilter]);
   const canManageTeam = isCentralAdmin || currentRole === "organization_admin";
   const canManageApplications = isCentralAdmin || currentRole === "organization_admin";
   const canManageSupport = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin", "support_officer"].includes(currentRole ?? "");
@@ -372,7 +506,28 @@ const [savingApplication, setSavingApplication] = useState(false);
   return <div className="shell">
     <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
       <div className="brand"><div className="brand-mark small">N</div><div><b>NEXORA HQ</b><small>SMART SERVICES LTD</small></div><button className="icon-btn mobile-close" onClick={()=>setMobileNav(false)}><X size={18}/></button></div>
-      <div className="workspace"><span className="dot"/> Company workspace <span className="chevron">⌄</span></div>
+      <div className="workspace">
+  <label className="workspace-label" htmlFor="organization-switcher">
+    <span className="dot" />
+    ACTIVE ORGANISATION
+  </label>
+
+  <select
+    id="organization-switcher"
+    className="workspace-select"
+    value={organizationId ?? ""}
+    onChange={e => switchOrganization(e.target.value)}
+    disabled={loading || organizations.length <= 1}
+  >
+    {organizations.map(org => (
+      <option key={org.organization_id} value={org.organization_id}>
+        {org.organization_name}
+      </option>
+    ))}
+  </select>
+
+  {isCentralAdmin && <small>Central Nexora Super Admin</small>}
+</div>
       <p className="nav-label">WORKSPACE</p>
       {nav.map(item => <button key={item.label} className={`nav-item ${section===item.label?"active":""}`} onClick={()=>{setSection(item.label);setMobileNav(false)}}><item.icon size={18}/>{item.label}</button>)}
       <div className="sidebar-bottom"><div className="secure"><ShieldCheck size={17}/><span><b>Protected workspace</b><small>Access is role-controlled</small></span></div><button className="nav-item" onClick={signOut}><LogOut size={18}/> Sign out</button></div>
@@ -388,7 +543,35 @@ const [savingApplication, setSavingApplication] = useState(false);
         {error && <div className="alert">{error}</div>}
         {loading ? <div className="panel loading">Loading your secure workspace…</div> : section==="Overview" ? <Overview clients={clients} apps={apps} onGo={setSection} organizationId={organizationId} canAccessFinance={canAccessFinance}/> :
           section==="Clients" ? <><section className="panel"><div className="toolbar"><div><b>Client directory</b><p className="muted tiny">Prospects and active client accounts</p></div><div className="search"><Search size={16}/><input placeholder="Search clients…" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="table-wrap"><table><thead><tr><th>CLIENT</th><th>BUSINESS TYPE</th><th>LOCATION</th><th>STATUS</th><th>CREATED</th><th></th></tr></thead><tbody>{filtered.map(c=><tr key={c.id}><td><b>{c.client_name}</b><small className="subcell">{c.id.slice(0,8)}</small></td><td>{c.business_type||"—"}</td><td>{c.location||"—"}</td><td><span className={`status ${c.status}`}>{c.status}</span></td><td>{new Date(c.created_at).toLocaleDateString()}</td><td><button type="button" className="secondary" onClick={()=>setFilesClientId(c.id)}><Paperclip size={14}/> Files</button></td></tr>)}{!filtered.length&&<tr><td colSpan={6} className="empty">No client records found.</td></tr>}</tbody></table></div></section>{filesClientId && organizationId && <section className="panel" style={{marginTop:18}}><div className="toolbar"><div><b>{clients.find(c=>c.id===filesClientId)?.client_name ?? "Client"}</b><p className="muted tiny">Contracts, agreements and other client documents</p></div><button type="button" className="icon-btn" aria-label="Close files" onClick={()=>setFilesClientId(null)}><X size={18}/></button></div><Attachments organizationId={organizationId} entityType="client" entityId={filesClientId} canWrite={canManageClientFiles} title="Client files"/></section>}</> :
-          section==="Applications" ? <section className="panel"><div className="toolbar"><div><b>Application registry</b><p className="muted tiny">Software products owned or managed by Nexora</p></div></div><div className="app-grid">{apps.map(a=><article
+          section==="Applications" ? <section className="panel"><div className="toolbar">
+  <div>
+    <b>Application registry ({apps.length})</b>
+    <p className="muted tiny">Software products owned or managed by Nexora</p>
+  </div>
+
+  <div className="toolbar">
+    <div className="search">
+      <Search size={16}/>
+      <input
+        placeholder="Search applications..."
+        value={applicationSearch}
+        onChange={e => setApplicationSearch(e.target.value)}
+      />
+    </div>
+
+    <select
+      value={applicationStatusFilter}
+      onChange={e => setApplicationStatusFilter(e.target.value as "all" | Product["status"])}
+    >
+      <option value="all">All statuses</option>
+      <option value="development">Development</option>
+      <option value="staging">Staging</option>
+      <option value="production">Production</option>
+      <option value="maintenance">Maintenance</option>
+      <option value="archived">Archived</option>
+    </select>
+  </div>
+</div><div className="app-grid">{filteredApplications.map(a=><article
   className="app-card"
   key={a.id}
   role="button"
@@ -400,14 +583,22 @@ const [savingApplication, setSavingApplication] = useState(false);
       openApplication(a);
     }
   }}
-><div className="app-icon"><AppWindow/></div><span className={`status ${a.status}`}>{a.status}</span><h3>{a.app_name}</h3><p className="muted tiny">{a.app_code}</p><p className="tiny">Version: {a.current_version||"Not recorded"}</p>{a.production_url&&<a
+><div className="app-icon"><AppWindow/></div><span className={`status ${a.status}`}>{a.status}</span><h3>{a.app_name}</h3><p className="muted tiny">{a.app_code}</p><p className="app-description">
+  {a.description || "No description provided yet."}
+</p><p className="tiny">Version: {a.current_version||"Not recorded"}</p>{a.production_url&&<a
   href={a.production_url}
   target="_blank"
   rel="noreferrer"
   onClick={e => e.stopPropagation()}
 >
   Open production site ↗
-</a>}</article>)}{!apps.length&&<p className="empty">No applications registered yet. Add your Nexora products to the application registry.</p>}</div></section> :
+</a>}</article>)}{!filteredApplications.length && (
+  <p className="empty">
+    {apps.length === 0
+      ? "No applications registered yet. Add your Nexora products to the application registry."
+      : "No applications match your search or selected status."}
+  </p>
+)}</div></section> :
           section==="Support" && organizationId ? <SupportModule organizationId={organizationId} clients={clients} apps={apps} canManage={canManageSupport}/> :
           section==="Finance" && organizationId ? <FinanceModule organizationId={organizationId} clients={clients} canAccess={canAccessFinance}/> :
           section==="Projects" && organizationId ? <ProjectsModule organizationId={organizationId} clients={clients} apps={apps} canManage={canManageProjects}/> :
@@ -451,7 +642,7 @@ const [savingApplication, setSavingApplication] = useState(false);
               {applicationMode === "add" ? "Register application" :
                applicationMode === "edit" ? "Edit application" : "Application details"}
             </h2>
-            <p className="muted tiny">Nexora Smart Services Ltd application registry</p>
+            <p className="muted tiny">{organizations.find(org => org.organization_id === organizationId)?.organization_name ?? "Selected organisation"} application registry</p>
           </div>
           <button type="button" className="icon-btn" onClick={() => setShowApplicationModal(false)}>
             <X />
@@ -469,6 +660,18 @@ const [savingApplication, setSavingApplication] = useState(false);
             onChange={e => setApplicationForm({...applicationForm, app_code: e.target.value})}
             placeholder="e.g. NEXORA-POS" />
         </label>
+        <label>Application description
+  <textarea
+    disabled={applicationMode === "view"}
+    value={applicationForm.description}
+    onChange={e => setApplicationForm({
+      ...applicationForm,
+      description: e.target.value
+    })}
+    placeholder="Describe what this application does and who it serves..."
+    rows={4}
+  />
+</label>
 
         <label>Repository URL
           <input disabled={applicationMode === "view"} type="url" value={applicationForm.repository_url}
@@ -510,11 +713,39 @@ const [savingApplication, setSavingApplication] = useState(false);
             Close
           </button>
 
-          {applicationMode === "view" && canManageApplications &&
-            <button type="button" className="primary" onClick={() => setApplicationMode("edit")}>
-              Edit application
-            </button>
-          }
+          
+{applicationMode === "view" && canManageApplications &&
+  <>
+    <button
+      type="button"
+      className="primary"
+      onClick={() => setApplicationMode("edit")}
+    >
+      Edit application
+    </button>
+
+    {selectedApplication?.status === "archived" ? (
+      <button
+        type="button"
+        className="secondary"
+        disabled={savingApplication}
+        onClick={() => changeApplicationArchiveStatus(false)}
+      >
+        Restore application
+      </button>
+    ) : (
+      <button
+        type="button"
+        className="secondary"
+        disabled={savingApplication}
+        onClick={() => changeApplicationArchiveStatus(true)}
+      >
+        Archive application
+      </button>
+    )}
+  </>
+}
+
 
           {applicationMode !== "view" &&
             <button type="submit" className="primary" disabled={savingApplication}>
