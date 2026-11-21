@@ -76,6 +76,12 @@ export default function App() {
   const [section, setSection] = useState<Section>("Overview");
   const [filesClientId, setFilesClientId] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
+  const [clientAssignments, setClientAssignments] = useState<
+  Record<string, "view" | "edit">
+>({});
+const [projectAssignments, setProjectAssignments] = useState<
+  Record<string, "view" | "edit">
+>({});
   const [apps, setApps] = useState<Product[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
@@ -160,19 +166,55 @@ async function loadOrganizationData(orgId: string) {
   setFilesClientId(null);
   setTeam([]);
 
-  const [c, a] = await Promise.all([
-    supabase
-      .from("clients")
-.select("id,client_name,business_type,location,contact_person,phone,email,notes,status,created_at")
-.eq("organization_id", orgId)
-.order("created_at", { ascending: false }),
+    
+const [c, a, assignments, projectRows] = await Promise.all([
+  supabase
+    .from("clients")
+    .select("id,client_name,business_type,location,contact_person,phone,email,notes,status,created_at")
+    .eq("organization_id", orgId)
+    .order("created_at", { ascending: false }),
 
-    supabase
-      .from("applications")
-      .select("id,app_name,app_code,description,repository_url,production_url,hosting_provider,current_version,status,created_at")
-      .eq("organization_id", orgId)
-      .order("app_name")
-  ]);
+  supabase
+    .from("applications")
+    .select("id,app_name,app_code,description,repository_url,production_url,hosting_provider,current_version,status,created_at")
+    .eq("organization_id", orgId)
+    .order("app_name"),
+
+  supabase
+    .from("record_assignments")
+    .select("entity_id,permission")
+    .eq("organization_id", orgId)
+    .eq("entity_type", "client")
+    .eq("user_id", session.user.id),
+
+  supabase
+    .from("record_assignments")
+    .select("entity_id,permission")
+    .eq("organization_id", orgId)
+    .eq("entity_type", "project")
+    .eq("user_id", session.user.id)
+]);
+
+    if (assignments.error) {
+    setClientAssignments({});
+    setError(`Could not load client permissions: ${assignments.error.message}`);
+  } else {
+    setClientAssignments(
+      Object.fromEntries(
+        (assignments.data ?? []).map(a => [a.entity_id, a.permission])
+      ) as Record<string, "view" | "edit">
+    );
+  }
+    if (projectRows.error) {
+    setProjectAssignments({});
+    setError(`Could not load project permissions: ${projectRows.error.message}`);
+  } else {
+    setProjectAssignments(
+      Object.fromEntries(
+        (projectRows.data ?? []).map(a => [a.entity_id, a.permission])
+      ) as Record<string, "view" | "edit">
+    );
+  }
 
   if (c.error) setError(c.error.message);
   else setClients((c.data ?? []) as Client[]);
@@ -599,7 +641,7 @@ async function changeApplicationArchiveStatus(archive: boolean) {
       <div className="content">
         <div className="page-head"><div><p className="eyebrow">COMPANY CONTROL CENTRE</p><h1>{section}</h1><p className="muted">{section==="Overview"?"A single view of Nexora operations, clients and applications.":`Manage ${section.toLowerCase()} across Nexora Smart Services Ltd.`}</p></div>
         
-{section==="Clients" && canManageClients && (
+{section==="Clients" && (
   <button
     className="primary"
     onClick={() => {
@@ -618,7 +660,7 @@ async function changeApplicationArchiveStatus(archive: boolean) {
         {loading ? <div className="panel loading">Loading your secure workspace…</div> : section==="Overview" ? <Overview clients={clients} apps={apps} onGo={setSection} organizationId={organizationId} canAccessFinance={canAccessFinance}/> :
           section==="Clients" ? <><section className="panel"><div className="toolbar"><div><b>Client directory</b><p className="muted tiny">Prospects and active client accounts</p></div><div className="search"><Search size={16}/><input placeholder="Search clients…" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="table-wrap"><table><thead><tr><th>CLIENT</th><th>BUSINESS TYPE</th><th>LOCATION</th><th>STATUS</th><th>CREATED</th><th></th></tr></thead><tbody>{filtered.map(c=><tr key={c.id}><td><b>{c.client_name}</b><small className="subcell">{c.id.slice(0,8)}</small></td><td>{c.business_type||"—"}</td><td>{c.location||"—"}</td><td><span className={`status ${c.status}`}>{c.status}</span></td><td>{new Date(c.created_at).toLocaleDateString()}</td>
 <td>
-  {canManageClients && (
+  {(canManageClients || clientAssignments[c.id] === "edit") && (
     <button
       type="button"
       className="secondary"
@@ -649,7 +691,10 @@ async function changeApplicationArchiveStatus(archive: boolean) {
     <Paperclip size={14}/> Files
   </button>
 </td>
-</tr>)}{!filtered.length&&<tr><td colSpan={6} className="empty">No client records found.</td></tr>}</tbody></table></div></section>{filesClientId && organizationId && <section className="panel" style={{marginTop:18}}><div className="toolbar"><div><b>{clients.find(c=>c.id===filesClientId)?.client_name ?? "Client"}</b><p className="muted tiny">Contracts, agreements and other client documents</p></div><button type="button" className="icon-btn" aria-label="Close files" onClick={()=>setFilesClientId(null)}><X size={18}/></button></div><Attachments organizationId={organizationId} entityType="client" entityId={filesClientId} canWrite={canManageClientFiles} title="Client files"/></section>}</> :
+</tr>)}{!filtered.length&&<tr><td colSpan={6} className="empty">No client records found.</td></tr>}</tbody></table></div></section>{filesClientId && organizationId && <section className="panel" style={{marginTop:18}}><div className="toolbar"><div><b>{clients.find(c=>c.id===filesClientId)?.client_name ?? "Client"}</b><p className="muted tiny">Contracts, agreements and other client documents</p></div><button type="button" className="icon-btn" aria-label="Close files" onClick={()=>setFilesClientId(null)}><X size={18}/></button></div><Attachments organizationId={organizationId} entityType="client" entityId={filesClientId} canWrite={
+  canManageClientFiles ||
+  clientAssignments[filesClientId] === "edit"
+} title="Client files"/></section>}</> :
           section==="Applications" ? <section className="panel"><div className="toolbar">
   <div>
     <b>Application registry ({apps.length})</b>
@@ -708,7 +753,7 @@ async function changeApplicationArchiveStatus(archive: boolean) {
 )}</div></section> :
           section==="Support" && organizationId ? <SupportModule organizationId={organizationId} clients={clients} apps={apps} canManage={canManageSupport}/> :
           section==="Finance" && organizationId ? <FinanceModule organizationId={organizationId} clients={clients} canAccess={canAccessFinance}/> :
-          section==="Projects" && organizationId ? <ProjectsModule organizationId={organizationId} clients={clients} apps={apps} canManage={canManageProjects}/> :
+          section==="Projects" && organizationId ? <ProjectsModule organizationId={organizationId} clients={clients} apps={apps} canManage={canManageProjects} projectAssignments={projectAssignments}/> :
           section==="Team & access" ? <TeamAccess
             members={team} loading={teamLoading} message={teamMessage}
             canManage={canManageTeam} isCentralAdmin={isCentralAdmin}
@@ -720,7 +765,7 @@ async function changeApplicationArchiveStatus(archive: boolean) {
       </div>
     </main>
     
-{showAdd && canManageClients && (
+{showAdd && (canManageClients || (!!selectedClient && clientAssignments[selectedClient.id] === "edit")) && (
   <div className="modal-backdrop">
     <form className="modal" onSubmit={addClient}>
       <div className="modal-head">

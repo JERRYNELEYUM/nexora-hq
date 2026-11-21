@@ -28,12 +28,15 @@ const emptyForm = {
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const fmt = (d: string | null) => (d ? new Date(d + "T00:00:00").toLocaleDateString() : "—");
 
-export default function ProjectsModule({ organizationId, clients, apps, canManage }: {
+export default function ProjectsModule({ organizationId, clients, apps, canManage, projectAssignments }: {
   organizationId: string;
   clients: { id: string; client_name: string }[];
   apps: { id: string; app_name: string }[];
   canManage: boolean;
+  projectAssignments: Record<string, "view" | "edit">;
 }) {
+    const canEditProject = (p: Project) =>
+    canManage || projectAssignments[p.id] === "edit";
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -206,7 +209,7 @@ export default function ProjectsModule({ organizationId, clients, apps, canManag
             const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0;
             return <tr key={p.id}>
               <td><b>{p.name}</b><small className="subcell">{clientName.get(p.client_id ?? "") ?? "Internal"}{p.application_id && appName.get(p.application_id) ? ` · ${appName.get(p.application_id)}` : ""}</small></td>
-              <td>{canManage
+              <td>{canEditProject(p)
                 ? <select aria-label={`Status for ${p.name}`} value={p.status} disabled={busyId===p.id} onChange={e=>patchProject(p,{status:e.target.value as ProjectStatus})}>
                     {(Object.keys(statusLabels) as ProjectStatus[]).map(s=><option key={s} value={s}>{statusLabels[s]}</option>)}
                   </select>
@@ -235,7 +238,7 @@ export default function ProjectsModule({ organizationId, clients, apps, canManag
           <p className="muted tiny">{clientName.get(selected.client_id ?? "") ?? "Internal project"} · {fmt(selected.start_date)} to {fmt(selected.due_date)}</p>
         </div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          {canManage && <select aria-label="Priority" value={selected.priority} disabled={busyId===selected.id} onChange={e=>patchProject(selected,{priority:e.target.value as Priority})}>
+          {canEditProject(selected) && <select aria-label="Priority" value={selected.priority} disabled={busyId===selected.id} onChange={e=>patchProject(selected,{priority:e.target.value as Priority})}>
             {(Object.keys(priorityLabels) as Priority[]).map(x=><option key={x} value={x}>{priorityLabels[x]} priority</option>)}
           </select>}
           {canManage && <button type="button" className="secondary" disabled={busyId===selected.id} onClick={()=>deleteProject(selected)}><Trash2 size={14}/> Delete project</button>}
@@ -247,7 +250,7 @@ export default function ProjectsModule({ organizationId, clients, apps, canManag
       <div style={{marginTop:10}}>
         {selectedTasks.map(t => <div className="list-row" key={t.id}>
           <div className="grow"><b style={{textDecoration:t.status==="done"?"line-through":"none",opacity:t.status==="done"?.6:1}}>{t.title}</b></div>
-          {canManage
+          {canEditProject(selected)
             ? <select aria-label={`Status for ${t.title}`} value={t.status} disabled={busyId===t.id} onChange={e=>setTaskStatus(t,e.target.value as TaskStatus)}>
                 {(Object.keys(taskLabels) as TaskStatus[]).map(s=><option key={s} value={s}>{taskLabels[s]}</option>)}
               </select>
@@ -260,7 +263,7 @@ export default function ProjectsModule({ organizationId, clients, apps, canManag
         <input style={{flex:1}} value={newTask} onChange={e=>setNewTask(e.target.value)} placeholder="Describe the next task…" aria-label="New task title"/>
         <button className="primary" disabled={busyId==="new-task" || !newTask.trim()}><Plus size={16}/> Add task</button>
       </form>}
-      <Attachments organizationId={organizationId} entityType="project" entityId={selected.id} canWrite={canManage} title="Project files"/>
+      <Attachments organizationId={organizationId} entityType="project" entityId={selected.id} canWrite={canEditProject(selected)} title="Project files"/>
     </section>}
 
     {showNew && <div className="modal-backdrop"><form className="modal" onSubmit={createProject}>
