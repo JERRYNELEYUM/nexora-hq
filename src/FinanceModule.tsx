@@ -10,8 +10,31 @@ type Method = "cash" | "mobile_money" | "bank_transfer" | "card" | "other";
 
 type Invoice = { id: string; client_id: string; project_id: string | null; invoice_number: string; status: InvStatus; currency: Currency; issue_date: string; due_date: string | null; notes: string | null; created_at: string };
 type Item = { id: string; invoice_id: string; description: string; quantity: number; unit_price: number };
-type Payment = { id: string; invoice_id: string; amount: number; method: Method; paid_on: string; reference: string | null };
-type Expense = { id: string; project_id: string | null; category: string; description: string; amount: number; currency: Currency; spent_on: string };
+type Payment = {
+  id: string;
+  invoice_id: string;
+  amount: number;
+  method: Method;
+  paid_on: string;
+  reference: string | null;
+  is_voided: boolean;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+};
+type Expense = {
+  id: string;
+  project_id: string | null;
+  category: string;
+  description: string;
+  amount: number;
+  currency: Currency;
+  spent_on: string;
+  is_voided: boolean;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
+};
 
 const methodLabels: Record<Method, string> = { cash: "Cash", mobile_money: "Mobile money", bank_transfer: "Bank transfer", card: "Card", other: "Other" };
 const categories = ["Internet & hosting", "Software & licences", "Transport", "Contractors & salaries", "Office & utilities", "Marketing", "Other"];
@@ -33,6 +56,8 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
   const [items, setItems] = useState<Item[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [paymentFilter, setPaymentFilter] = useState<"active" | "voided">("active");
+  const [expenseFilter, setExpenseFilter] = useState<"active" | "voided">("active");
   const [projects, setProjects] = useState<{ id: string; name: string; client_id: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -57,8 +82,8 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
     const [i, it, p, ex, pr] = await Promise.all([
       supabase.from("invoices").select("id,client_id,project_id,invoice_number,status,currency,issue_date,due_date,notes,created_at").eq("organization_id", organizationId).order("created_at", { ascending: false }),
       supabase.from("invoice_items").select("id,invoice_id,description,quantity,unit_price").eq("organization_id", organizationId),
-      supabase.from("payments").select("id,invoice_id,amount,method,paid_on,reference").eq("organization_id", organizationId).order("paid_on", { ascending: true }),
-      supabase.from("expenses").select("id,project_id,category,description,amount,currency,spent_on").eq("organization_id", organizationId).order("spent_on", { ascending: false }),
+      supabase.from("payments").select("id,invoice_id,amount,method,paid_on,reference,is_voided,voided_at,voided_by,void_reason").eq("organization_id", organizationId).order("paid_on", { ascending: true }),
+      supabase.from("expenses").select("id,project_id,category,description,amount,currency,spent_on,is_voided,voided_at,voided_by,void_reason").eq("organization_id", organizationId).order("spent_on", { ascending: false }),
       supabase.from("projects").select("id,name,client_id").eq("organization_id", organizationId).order("name")
     ]);
     const firstError = [i, it, p, ex].find(r => r.error);
@@ -73,9 +98,21 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
 
   const calc = useMemo(() => {
     const map = new Map<string, { total: number; paid: number }>();
+
     invoices.forEach(inv => map.set(inv.id, { total: 0, paid: 0 }));
-    items.forEach(x => { const m = map.get(x.invoice_id); if (m) m.total += x.quantity * x.unit_price; });
-    payments.forEach(x => { const m = map.get(x.invoice_id); if (m) m.paid += x.amount; });
+
+    items.forEach(x => {
+      const m = map.get(x.invoice_id);
+      if (m) m.total += x.quantity * x.unit_price;
+    });
+
+    payments.forEach(x => {
+      if (x.is_voided) return;
+
+      const m = map.get(x.invoice_id);
+      if (m) m.paid += x.amount;
+    });
+
     return map;
   }, [invoices, items, payments]);
 
@@ -97,8 +134,17 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
       invoiced += c.total; collected += c.paid;
       const d = derived(inv); if (d.overdue) overdue += d.balance;
     });
-    const spent = expenses.filter(e => e.currency === cur).reduce((s, e) => s + e.amount, 0);
-    return { invoiced, collected, outstanding: invoiced - collected, overdue, spent };
+    const spent = expenses
+      .filter(e => e.currency === cur && !e.is_voided)
+      .reduce((s, e) => s + e.amount, 0);
+
+    return {
+      invoiced,
+      collected,
+      outstanding: invoiced - collected,
+      overdue,
+      spent
+    };
     // eslint-disable-next-line
   }, [invoices, calc, expenses, cur]);
 
@@ -117,7 +163,7 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
         clientName: clientName.get(selected.client_id) ?? "Client",
         projectName: projects.find(p => p.id === selected.project_id)?.name ?? null,
         items: selItems.map(x => ({ description: x.description, quantity: x.quantity, unitPrice: x.unit_price })),
-        payments: selPayments.map(x => ({ amount: x.amount, method: methodLabels[x.method], paidOn: x.paid_on, reference: x.reference }))
+        payments: selPayments.filter(x => !x.is_voided).map(x => ({ amount: x.amount, method: methodLabels[x.method], paidOn: x.paid_on, reference: x.reference }))
       });
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Could not open the print dialog.");
@@ -189,12 +235,46 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
     setBusyId(null);
   }
 
-  async function deletePayment(p: Payment) {
+  async function voidPayment(p: Payment) {
     if (!supabase) return;
-    if (!window.confirm("Remove this payment record?")) return;
+
+    const reason = window.prompt("Enter the reason for voiding this payment:");
+    if (reason === null) return;
+
+    if (!reason.trim()) {
+      setMessage("A reason is required to void a payment.");
+      return;
+    }
+
     setBusyId(p.id);
-    const { error } = await supabase.from("payments").delete().eq("id", p.id).eq("organization_id", organizationId);
-    if (error) setMessage(`Removal failed: ${error.message}`); else await load();
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      setMessage("Could not verify the current user. Please sign in again.");
+      setBusyId(null);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("payments")
+      .update({
+        is_voided: true,
+        voided_at: new Date().toISOString(),
+        voided_by: user.id,
+        void_reason: reason.trim()
+      })
+      .eq("id", p.id)
+      .eq("organization_id", organizationId)
+      .eq("is_voided", false);
+
+    if (error) {
+      setMessage(`Payment void failed: ${error.message}`);
+    } else {
+      setMessage("Payment successfully voided.");
+      await load();
+    }
+
     setBusyId(null);
   }
 
@@ -213,12 +293,46 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
     setSaving(false);
   }
 
-  async function deleteExpense(x: Expense) {
+  async function voidExpense(x: Expense) {
     if (!supabase) return;
-    if (!window.confirm(`Delete the expense "${x.description}"?`)) return;
+
+    const reason = window.prompt("Enter the reason for voiding this expense:");
+    if (reason === null) return;
+
+    if (!reason.trim()) {
+      setMessage("A reason is required to void an expense.");
+      return;
+    }
+
     setBusyId(x.id);
-    const { error } = await supabase.from("expenses").delete().eq("id", x.id).eq("organization_id", organizationId);
-    if (error) setMessage(`Delete failed: ${error.message}`); else setExpenses(l => l.filter(e => e.id !== x.id));
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      setMessage("Could not verify the current user. Please sign in again.");
+      setBusyId(null);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("expenses")
+      .update({
+        is_voided: true,
+        voided_at: new Date().toISOString(),
+        voided_by: user.id,
+        void_reason: reason.trim()
+      })
+      .eq("id", x.id)
+      .eq("organization_id", organizationId)
+      .eq("is_voided", false);
+
+    if (error) {
+      setMessage(`Expense void failed: ${error.message}`);
+    } else {
+      setMessage("Expense successfully voided.");
+      await load();
+    }
+
     setBusyId(null);
   }
 
@@ -265,16 +379,70 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
             {!invoices.length && <tr><td colSpan={6} className="empty">No invoices yet. Select New invoice to bill a client.</td></tr>}
           </tbody></table></div>
         :
-        <div className="table-wrap"><table>
+        <>
+          <div style={{display:"flex", gap:8, marginBottom:14}}>
+            <button
+              type="button"
+              className={expenseFilter === "active" ? "primary" : "secondary"}
+              onClick={() => setExpenseFilter("active")}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              className={expenseFilter === "voided" ? "primary" : "secondary"}
+              onClick={() => setExpenseFilter("voided")}
+            >
+              Voided
+            </button>
+          </div>
+          <div className="table-wrap"><table>
           <thead><tr><th>EXPENSE</th><th>CATEGORY</th><th>DATE</th><th>AMOUNT</th><th></th></tr></thead>
           <tbody>
-            {expenses.map(x => <tr key={x.id}>
-              <td><b>{x.description}</b><small className="subcell">{projects.find(p=>p.id===x.project_id)?.name ?? "Not linked to a project"}</small></td>
+            {expenses.filter(x => expenseFilter === "active" ? !x.is_voided : x.is_voided).map(x => <tr key={x.id}>
+              <td>
+  <b>{x.description}</b>
+  <small className="subcell">
+    {projects.find(p=>p.id===x.project_id)?.name ?? "Not linked to a project"}
+  </small>
+  {x.is_voided && (
+    <small className="subcell">
+      VOIDED · {x.void_reason ?? "No reason recorded"}
+    </small>
+  )}
+</td>
               <td>{x.category}</td><td>{fmtDate(x.spent_on)}</td><td>{money(x.amount, x.currency)}</td>
-              <td style={{whiteSpace:"nowrap"}}><button type="button" className="icon-btn" aria-label={`Receipts for ${x.description}`} onClick={()=>setExpenseFilesId(x.id)}><Paperclip size={15}/></button> <button type="button" className="icon-btn" aria-label={`Delete ${x.description}`} disabled={busyId===x.id} onClick={()=>deleteExpense(x)}><Trash2 size={15}/></button></td>
+              <td style={{whiteSpace:"nowrap"}}>
+  <button
+    type="button"
+    className="icon-btn"
+    aria-label={`Receipts for ${x.description}`}
+    onClick={()=>setExpenseFilesId(x.id)}
+  >
+    <Paperclip size={15}/>
+  </button>
+  {!x.is_voided && (
+    <button
+      type="button"
+      className="icon-btn"
+      aria-label={`Void ${x.description}`}
+      title="Void expense"
+      disabled={busyId===x.id}
+      onClick={()=>voidExpense(x)}
+    >
+      <Trash2 size={15}/>
+    </button>
+  )}
+</td>
             </tr>)}
-            {!expenses.length && <tr><td colSpan={5} className="empty">No expenses recorded yet.</td></tr>}
-          </tbody></table></div>}
+            {!expenses.some(x => expenseFilter === "active" ? !x.is_voided : x.is_voided) && (
+  <tr>
+    <td colSpan={5} className="empty">
+      {expenseFilter === "active" ? "No active expenses." : "No voided expenses."}
+    </td>
+  </tr>
+)}
+          </tbody></table></div></>}
     </section>
 
     {tab==="expenses" && expenseFilesId && <section className="panel" style={{marginTop:18}}>
@@ -304,12 +472,60 @@ export default function FinanceModule({ organizationId, clients, canAccess }: {
         </tbody></table></div>
       {selected.notes && <p className="muted tiny" style={{marginTop:12}}>Notes: {selected.notes}</p>}
 
-      <div style={{marginTop:18}}><b>Payments</b>
-        {selPayments.map(p=><div className="list-row" key={p.id}>
-          <div className="grow"><b>{money(p.amount, selected.currency)}</b><small>{methodLabels[p.method]} · {fmtDate(p.paid_on)}{p.reference ? ` · ref ${p.reference}` : ""}</small></div>
-          <button type="button" className="icon-btn" aria-label="Remove payment" disabled={busyId===p.id} onClick={()=>deletePayment(p)}><Trash2 size={15}/></button>
-        </div>)}
-        {!selPayments.length && <p className="empty">{selected.status==="sent" ? "No payments recorded yet." : "Payments can be recorded once the invoice is marked as sent."}</p>}
+      <div style={{marginTop:18}}>
+  <b>Payments</b>
+
+  <div style={{display:"flex", gap:8, marginTop:10, marginBottom:12}}>
+    <button
+      type="button"
+      className={paymentFilter === "active" ? "primary" : "secondary"}
+      onClick={() => setPaymentFilter("active")}
+    >
+      Active
+    </button>
+    <button
+      type="button"
+      className={paymentFilter === "voided" ? "primary" : "secondary"}
+      onClick={() => setPaymentFilter("voided")}
+    >
+      Voided
+    </button>
+  </div>
+
+  {selPayments
+    .filter(p => paymentFilter === "active" ? !p.is_voided : p.is_voided)
+    .map(p => (
+      <div className="list-row" key={p.id}>
+        <div className="grow">
+          <b>{money(p.amount, selected.currency)}</b>
+          <small>
+            {methodLabels[p.method]} · {fmtDate(p.paid_on)}
+            {p.reference ? ` · ref ${p.reference}` : ""}
+            {p.is_voided ? ` · VOIDED: ${p.void_reason ?? "No reason recorded"}` : ""}
+          </small>
+        </div>
+
+        {!p.is_voided && (
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Void payment"
+            title="Void payment"
+            disabled={busyId === p.id}
+            onClick={() => voidPayment(p)}
+          >
+            <Trash2 size={15}/>
+          </button>
+        )}
+      </div>
+    ))}
+
+  {!selPayments.some(p => paymentFilter === "active" ? !p.is_voided : p.is_voided) && (
+    <p className="muted tiny">
+      {paymentFilter === "active" ? "No active payments." : "No voided payments."}
+    </p>
+  )}
+
       </div>
       {selected.status==="sent" && selBalance>0 && <form onSubmit={recordPayment} style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:14}}>
         <input type="number" min="0" step="0.01" required placeholder={`Amount (max ${selBalance})`} value={payForm.amount} onChange={e=>setPayForm({...payForm,amount:e.target.value})} aria-label="Payment amount"/>
