@@ -113,3 +113,20 @@
   padding-top: 8px;
   z-index: 2;
 }
+/* Global modal height and scrolling correction */
+.modal {
+  max-height: calc(100vh - 36px);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Keep modal action buttons accessible while scrolling */
+.modal .modal-actions {
+  position: sticky;
+  bottom: -24px;
+  background: white;
+  padding: 14px 0 4px;
+  z-index: 2;
+}
