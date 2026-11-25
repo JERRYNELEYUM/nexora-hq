@@ -97,3 +97,19 @@
   padding: 14px 0 4px;
   z-index: 2;
 }
+/* Keep sidebar navigation and Sign out accessible at normal zoom */
+.sidebar {
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sidebar-bottom {
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  background: #102b46;
+  padding-top: 8px;
+  z-index: 2;
+}
