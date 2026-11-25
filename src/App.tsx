@@ -886,7 +886,7 @@ async function changeApplicationArchiveStatus(archive: boolean) {
     
 {showAdd && (canManageClients || (!!selectedClient && clientAssignments[selectedClient.id] === "edit")) && (
   <div className="modal-backdrop">
-    <form className="modal" onSubmit={addClient}>
+    <form className="modal client-form-modal" onSubmit={addClient}>
       <div className="modal-head">
         <div>
           <h2>{selectedClient ? "Edit client" : "Add a client"}</h2>

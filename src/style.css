@@ -82,3 +82,18 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* Client registration and editing modal scrolling */
+.client-form-modal {
+  width: min(100%, 520px);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.client-form-modal .modal-actions {
+  position: sticky;
+  bottom: -24px;
+  background: white;
+  padding: 14px 0 4px;
+  z-index: 2;
+}
