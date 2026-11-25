@@ -40,6 +40,15 @@ type Product = {
   current_version: string | null;
   created_at: string;
 };
+type ClientApplication = {
+  id: string;
+  organization_id: string;
+  client_id: string;
+  application_id: string;
+  status: "planned" | "configuring" | "active" | "paused" | "ended";
+  start_date: string | null;
+  created_at: string;
+};
 type TeamMember = {
   member_id: string;
   member_user_id: string;
@@ -83,6 +92,11 @@ const [projectAssignments, setProjectAssignments] = useState<
   Record<string, "view" | "edit">
 >({});
   const [apps, setApps] = useState<Product[]>([]);
+  const [clientApplications, setClientApplications] = useState<ClientApplication[]>([]);
+  const [showClientApplicationsModal, setShowClientApplicationsModal] = useState(false);
+  const [selectedApplicationsClient, setSelectedApplicationsClient] = useState<Client | null>(null);
+  const [savingClientApplication, setSavingClientApplication] = useState(false);
+  const [clientApplicationMessage, setClientApplicationMessage] = useState("");
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string | null>(null);
@@ -157,7 +171,7 @@ const [savingApplication, setSavingApplication] = useState(false);
     if (session && section === "Team & access" && organizationId) loadTeam(organizationId);
   }, [session, section, organizationId]);
 
-  
+
 async function loadOrganizationData(orgId: string) {
   if (!supabase) return;
 
@@ -165,37 +179,48 @@ async function loadOrganizationData(orgId: string) {
   setError("");
   setFilesClientId(null);
   setTeam([]);
+  setClientApplications([]);
 
-    
-const [c, a, assignments, projectRows] = await Promise.all([
-  supabase
-    .from("clients")
-    .select("id,client_name,business_type,location,contact_person,phone,email,notes,status,created_at")
-    .eq("organization_id", orgId)
-    .order("created_at", { ascending: false }),
+  const [c, a, assignments, projectRows, clientAppRows] = await Promise.all([
+    // Load clients
+    supabase
+      .from("clients")
+      .select("id,client_name,business_type,location,contact_person,phone,email,notes,status,created_at")
+      .eq("organization_id", orgId)
+      .order("created_at", { ascending: false }),
 
-  supabase
-    .from("applications")
-    .select("id,app_name,app_code,description,repository_url,production_url,hosting_provider,current_version,status,created_at")
-    .eq("organization_id", orgId)
-    .order("app_name"),
+    // Load registered applications
+    supabase
+      .from("applications")
+      .select("id,app_name,app_code,description,repository_url,production_url,hosting_provider,current_version,status,created_at")
+      .eq("organization_id", orgId)
+      .order("app_name"),
 
-  supabase
-    .from("record_assignments")
-    .select("entity_id,permission")
-    .eq("organization_id", orgId)
-    .eq("entity_type", "client")
-    .eq("user_id", session.user.id),
+    // Load client record permissions
+    supabase
+      .from("record_assignments")
+      .select("entity_id,permission")
+      .eq("organization_id", orgId)
+      .eq("entity_type", "client")
+      .eq("user_id", session.user.id),
 
-  supabase
-    .from("record_assignments")
-    .select("entity_id,permission")
-    .eq("organization_id", orgId)
-    .eq("entity_type", "project")
-    .eq("user_id", session.user.id)
-]);
+    // Load project record permissions
+    supabase
+      .from("record_assignments")
+      .select("entity_id,permission")
+      .eq("organization_id", orgId)
+      .eq("entity_type", "project")
+      .eq("user_id", session.user.id),
 
-    if (assignments.error) {
+    // Load client application assignments
+    supabase
+      .from("client_applications")
+      .select("id,organization_id,client_id,application_id,status,start_date,created_at")
+      .eq("organization_id", orgId)
+      .order("created_at", { ascending: false })
+  ]);
+
+  if (assignments.error) {
     setClientAssignments({});
     setError(`Could not load client permissions: ${assignments.error.message}`);
   } else {
@@ -205,7 +230,8 @@ const [c, a, assignments, projectRows] = await Promise.all([
       ) as Record<string, "view" | "edit">
     );
   }
-    if (projectRows.error) {
+
+  if (projectRows.error) {
     setProjectAssignments({});
     setError(`Could not load project permissions: ${projectRows.error.message}`);
   } else {
@@ -216,11 +242,26 @@ const [c, a, assignments, projectRows] = await Promise.all([
     );
   }
 
-  if (c.error) setError(c.error.message);
-  else setClients((c.data ?? []) as Client[]);
+  if (clientAppRows.error) {
+    setClientApplications([]);
+    setError(`Could not load client applications: ${clientAppRows.error.message}`);
+  } else {
+    setClientApplications(
+      (clientAppRows.data ?? []) as ClientApplication[]
+    );
+  }
 
-  if (a.error) setError(a.error.message);
-  else setApps((a.data ?? []) as Product[]);
+  if (c.error) {
+    setError(c.error.message);
+  } else {
+    setClients((c.data ?? []) as Client[]);
+  }
+
+  if (a.error) {
+    setError(a.error.message);
+  } else {
+    setApps((a.data ?? []) as Product[]);
+  }
 
   setLoading(false);
 }
@@ -472,6 +513,68 @@ async function changeApplicationArchiveStatus(archive: boolean) {
 
   setSavingApplication(false);
 }
+  async function saveClientApplication(
+    applicationId: string,
+    status: ClientApplication["status"],
+    startDate: string
+  ) {
+    if (!supabase || !organizationId || !selectedApplicationsClient) {
+      setClientApplicationMessage("Client or organisation information is missing.");
+      return;
+    }
+
+    if (!canManageClientApplications) {
+      setClientApplicationMessage("You do not have permission to manage client applications.");
+      return;
+    }
+
+    const applicationExists = apps.some(
+      app => app.id === applicationId
+    );
+
+    if (!applicationExists) {
+      setClientApplicationMessage("This application is not registered in the selected organisation.");
+      return;
+    }
+
+    setSavingClientApplication(true);
+    setClientApplicationMessage("");
+
+    try {
+      const { data, error: saveError } = await supabase
+        .from("client_applications")
+        .upsert(
+          {
+            organization_id: organizationId,
+            client_id: selectedApplicationsClient.id,
+            application_id: applicationId,
+            status,
+            start_date: startDate || null
+          },
+          {
+            onConflict: "client_id,application_id"
+          }
+        )
+        .select("id,organization_id,client_id,application_id,status,start_date,created_at")
+        .single();
+
+      if (saveError) {
+        setClientApplicationMessage(saveError.message);
+        return;
+      }
+
+      setClientApplications(current => [
+        ...current.filter(item => item.id !== data.id &&
+          !(item.client_id === data.client_id &&
+            item.application_id === data.application_id)),
+        data as ClientApplication
+      ]);
+
+      setClientApplicationMessage("Application assignment saved successfully.");
+    } finally {
+      setSavingClientApplication(false);
+    }
+  }
 
   async function sendPasswordReset() {
     if (!supabase) return;
@@ -586,6 +689,9 @@ async function changeApplicationArchiveStatus(archive: boolean) {
 }, [apps, applicationSearch, applicationStatusFilter]);
   const canManageTeam = isCentralAdmin || currentRole === "organization_admin";
   const canManageApplications = isCentralAdmin || currentRole === "organization_admin";
+  const canManageClientApplications =
+  isCentralAdmin ||
+  ["organization_admin", "operations_manager"].includes(currentRole ?? "");
   const canManageClients = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin"].includes(currentRole ?? "");
   const canManageSupport = isCentralAdmin || ["organization_admin", "operations_manager", "technical_admin", "support_officer"].includes(currentRole ?? "");
   const canAccessFinance = isCentralAdmin || ["organization_admin", "operations_manager", "finance_officer"].includes(currentRole ?? "");
@@ -690,6 +796,19 @@ async function changeApplicationArchiveStatus(archive: boolean) {
   >
     <Paperclip size={14}/> Files
   </button>
+    {canManageClientApplications && (
+    <button
+      type="button"
+      className="secondary"
+      onClick={() => {
+        setSelectedApplicationsClient(c);
+        setClientApplicationMessage("");
+        setShowClientApplicationsModal(true);
+      }}
+    >
+      <AppWindow size={14}/> Applications
+    </button>
+  )}
 </td>
 </tr>)}{!filtered.length&&<tr><td colSpan={6} className="empty">No client records found.</td></tr>}</tbody></table></div></section>{filesClientId && organizationId && <section className="panel" style={{marginTop:18}}><div className="toolbar"><div><b>{clients.find(c=>c.id===filesClientId)?.client_name ?? "Client"}</b><p className="muted tiny">Contracts, agreements and other client documents</p></div><button type="button" className="icon-btn" aria-label="Close files" onClick={()=>setFilesClientId(null)}><X size={18}/></button></div><Attachments organizationId={organizationId} entityType="client" entityId={filesClientId} canWrite={
   canManageClientFiles ||
@@ -1028,11 +1147,130 @@ async function changeApplicationArchiveStatus(archive: boolean) {
             </button>
           }
         </div>
+
       </form>
     </div>}
 
+    {showClientApplicationsModal && selectedApplicationsClient && (
+      <div
+        className="modal-backdrop"
+        onClick={() => setShowClientApplicationsModal(false)}
+      >
+        <div className="modal client-applications-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-head">
+            <div>
+              <h2>Client applications</h2>
+              <p className="muted tiny">
+                Manage applications assigned to {selectedApplicationsClient.client_name}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Close"
+              onClick={() => setShowClientApplicationsModal(false)}
+            >
+              <X />
+            </button>
+          </div>
+
+          {clientApplicationMessage && (
+            <div className="alert">{clientApplicationMessage}</div>
+          )}
+
+          {apps.length === 0 ? (
+            <p className="muted">No applications are registered yet.</p>
+          ) : (
+            <div>
+              {apps.map(application => {
+                const assignment = clientApplications.find(
+                  item =>
+                    item.client_id === selectedApplicationsClient.id &&
+                    item.application_id === application.id
+                );
+
+                const currentStatus = assignment?.status ?? "planned";
+
+                return (
+                  <div
+                    key={application.id}
+                    className="panel"
+                    style={{ marginBottom: 12 }}
+                  >
+                    <div className="toolbar">
+                      <div>
+                        <b>{application.app_name}</b>
+                        <p className="muted tiny">
+                          {application.app_code} · Application status: {application.status}
+                        </p>
+                      </div>
+                      <span className={`status ${currentStatus}`}>
+                        {currentStatus}
+                      </span>
+                    </div>
+
+                    <label>
+                      Client assignment status
+                      <select
+                        value={currentStatus}
+                        disabled={savingClientApplication || !canManageClientApplications}
+                        onChange={e =>
+                          saveClientApplication(
+                            application.id,
+                            e.target.value as ClientApplication["status"],
+                            assignment?.start_date ?? ""
+                          )
+                        }
+                      >
+                        <option value="planned">Planned</option>
+                        <option value="configuring">Configuring</option>
+                        <option value="active">Active</option>
+                        <option value="paused">Paused</option>
+                        <option value="ended">Ended</option>
+                      </select>
+                    </label>
+
+                    {assignment?.status === "active" &&
+                      application.status === "production" &&
+                      application.production_url && (
+                        <p style={{ marginTop: 12 }}>
+                          <a
+                            href={application.production_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Open application ↗
+                          </a>
+                        </p>
+                      )}
+
+                    {assignment && (
+                      <p className="muted tiny">
+                        Assigned: {assignment.start_date || "Start date not specified"}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setShowClientApplicationsModal(false)}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
   </div>;
 }
+
 
 function TeamAccess({
   members, loading, message, canManage, isCentralAdmin, currentUserId, actionId,

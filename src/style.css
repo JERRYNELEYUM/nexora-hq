@@ -75,3 +75,10 @@
   font-size: 9px;
   color: #9eb4c8;
 }
+/* Client Applications modal scrolling */
+.client-applications-modal {
+  width: min(100%, 620px);
+  max-height: 90vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
